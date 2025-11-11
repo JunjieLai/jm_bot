@@ -166,7 +166,11 @@ class JMComicAPI:
         Returns:
             下载目录路径，失败返回 None
         """
+        download_complete = False
+        result_holder = [None]
+
         def _download():
+            nonlocal download_complete
             try:
                 # 创建选项
                 option = jmcomic.JmOption.default()
@@ -189,29 +193,37 @@ class JMComicAPI:
 
                 if downloaded_dirs:
                     print(f"找到下载目录: {downloaded_dirs[0]}")
-                    return downloaded_dirs[0]
-
-                print(f"未找到下载目录")
-                return None
+                    result_holder[0] = downloaded_dirs[0]
+                else:
+                    print(f"未找到下载目录")
 
             except Exception as e:
                 print(f"下载错误: {e}")
                 import traceback
                 traceback.print_exc()
-                return None
+            finally:
+                download_complete = True
 
-        # 在线程池中执行下载
+        # 启动下载线程
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(self.executor, _download)
+        download_task = loop.run_in_executor(self.executor, _download)
 
-        # 下载完成后调用进度回调（100%）
-        if result and progress_callback:
-            try:
-                await progress_callback(100, 100)
-            except:
-                pass
+        # 心跳：每5秒调用一次进度回调
+        heartbeat_count = 0
+        while not download_complete:
+            await asyncio.sleep(5)
+            if not download_complete and progress_callback:
+                heartbeat_count += 1
+                try:
+                    # 发送心跳进度更新
+                    await progress_callback(-1, heartbeat_count)
+                except Exception as e:
+                    print(f"进度回调错误: {e}")
 
-        return result
+        # 等待下载完成
+        await download_task
+
+        return result_holder[0]
 
     async def create_pdf(
         self,

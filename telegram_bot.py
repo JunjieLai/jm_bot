@@ -302,16 +302,28 @@ async def handle_download(update: Update, album_id: str):
         )
 
     try:
-        # 进度回调
-        last_percent = 0
+        # 进度回调（心跳机制）
+        last_update_time = 0
+        import time
 
         async def progress_callback(current, total):
-            nonlocal last_percent
-            percent = int(current / total * 100)
+            nonlocal last_update_time
+            current_time = time.time()
 
-            # 每 20% 更新一次
-            if percent - last_percent >= 20:
-                last_percent = percent
+            # current == -1 表示心跳更新
+            if current == -1:
+                # 每5秒心跳一次，更新消息让 Railway 知道还活着
+                dots = "." * (total % 4)
+                await downloading_msg.edit_text(
+                    f"📥 下载中: {album_id}\n"
+                    f"⏳ 正在下载{dots}\n"
+                    f"⏱️ 已用时: {total * 5} 秒"
+                )
+                logger.info(f"心跳更新 #{total}")
+            # 限制更新频率，避免 Telegram API 限流
+            elif current_time - last_update_time >= 3:
+                last_update_time = current_time
+                percent = int(current / total * 100)
                 bar = "█" * (percent // 10) + "░" * (10 - percent // 10)
                 await downloading_msg.edit_text(
                     f"📥 下载中: {album_id}\n"
