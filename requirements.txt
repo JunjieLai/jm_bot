@@ -1,7 +1,13 @@
 # Telegram Bot Framework
 python-telegram-bot>=20.0
 
-# JMComic Crawler (install from local directory)
+# JMComic Crawler - install from local directory
+# This will also install its dependencies:
+# - curl_cffi
+# - commonX
+# - PyYAML
+# - Pillow
+# - pycryptodome
 ./JMComic-Crawler-Python
 
 # Additional Utilities
