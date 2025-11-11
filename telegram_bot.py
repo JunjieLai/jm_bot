@@ -11,7 +11,7 @@ import shutil
 from typing import Optional
 from functools import wraps
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, InputMediaPhoto
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -113,9 +113,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "ℹ️ /info 1222345\n\n"
         "💡 提示：\n"
         "• 搜索结果会显示按钮，可直接点击下载\n"
-        "• 下载默认为 PDF 格式\n"
-        f"• 单文件最大 {TelegramConfig.MAX_FILE_SIZE_MB}MB\n"
-        "• 大文件会自动压缩\n\n"
+        "• 下载以图片组形式发送，可直接查看和保存\n"
+        "• 每组最多 10 张图片\n"
+        "• 支持 Telegram 原生图片浏览\n\n"
         "❓ 需要帮助？访问 @Jm6271_bot"
     )
 
@@ -333,75 +333,97 @@ async def handle_download(update: Update, album_id: str):
             return
 
         logger.info(f"下载完成，目录: {download_dir}")
-        await downloading_msg.edit_text(
-            f"✅ 下载完成！\n"
-            f"📦 正在生成 PDF..."
-        )
 
-        # 创建 PDF
-        pdf_file = TelegramConfig.TEMP_DIR / f"{album_id}.pdf"
-        logger.info(f"开始生成 PDF: {pdf_file}")
-        success = await jm_api.create_pdf(download_dir, pdf_file)
+        # 获取所有图片文件
+        image_files = sorted(download_dir.glob("*.webp"))
+        if not image_files:
+            image_files = sorted(download_dir.glob("*.jpg"))
+        if not image_files:
+            image_files = sorted(download_dir.glob("*.png"))
 
-        if not success:
-            logger.error(f"生成 PDF 失败: {album_id}")
+        if not image_files:
+            logger.error(f"未找到图片文件: {album_id}")
             await downloading_msg.edit_text(
-                f"❌ 生成 PDF 失败"
+                f"❌ 下载的文件夹中没有图片\n\n"
+                f"漫画 ID: {album_id}"
             )
             return
 
-        logger.info(f"PDF 生成成功: {pdf_file}")
+        total_images = len(image_files)
+        logger.info(f"找到 {total_images} 张图片")
 
-        # 检查文件大小
-        file_size_mb = pdf_file.stat().st_size / (1024 * 1024)
-
-        if file_size_mb > TelegramConfig.MAX_FILE_SIZE_MB:
-            await downloading_msg.edit_text(
-                f"⚠️ 文件过大 ({file_size_mb:.1f}MB)\n"
-                f"Telegram 限制: {TelegramConfig.MAX_FILE_SIZE_MB}MB\n\n"
-                "建议：使用其他方式传输或压缩文件"
-            )
-            # 清理
-            pdf_file.unlink()
-            return
-
-        # 发送文件
-        logger.info(f"开始上传 PDF: {file_size_mb:.1f}MB")
         await downloading_msg.edit_text(
-            f"📤 正在上传 PDF ({file_size_mb:.1f}MB)...\n"
-            "请稍候..."
+            f"✅ 下载完成！共 {total_images} 张图片\n"
+            f"📤 正在发送图片..."
         )
 
-        try:
-            with open(pdf_file, 'rb') as f:
-                await update.effective_chat.send_document(
-                    document=f,
-                    filename=f"{album_id}.pdf",
-                    caption=f"📖 漫画 ID: {album_id}\n📦 大小: {file_size_mb:.1f}MB",
-                    read_timeout=120,
-                    write_timeout=120
+        # Telegram Media Group 限制每组 10 张图片
+        # 分批发送
+        batch_size = 10
+        total_batches = (total_images + batch_size - 1) // batch_size
+
+        logger.info(f"开始发送 {total_batches} 组图片")
+
+        for batch_num in range(total_batches):
+            start_idx = batch_num * batch_size
+            end_idx = min(start_idx + batch_size, total_images)
+            batch_files = image_files[start_idx:end_idx]
+
+            logger.info(f"发送第 {batch_num + 1}/{total_batches} 组 ({len(batch_files)} 张)")
+
+            try:
+                # 构建 Media Group
+                media_group = []
+                for i, img_file in enumerate(batch_files):
+                    # 第一张图片添加标题
+                    if i == 0:
+                        if total_batches > 1:
+                            caption = f"📖 漫画 ID: {album_id}\n📦 第 {batch_num + 1}/{total_batches} 组 (共 {total_images} 张)"
+                        else:
+                            caption = f"📖 漫画 ID: {album_id}\n📦 共 {total_images} 张图片"
+                        media_group.append(InputMediaPhoto(open(img_file, 'rb'), caption=caption))
+                    else:
+                        media_group.append(InputMediaPhoto(open(img_file, 'rb')))
+
+                # 发送图片组
+                await update.effective_chat.send_media_group(
+                    media=media_group,
+                    read_timeout=60,
+                    write_timeout=60
                 )
-            logger.info(f"PDF 上传成功")
-        except Exception as e:
-            logger.error(f"上传 PDF 失败: {e}", exc_info=True)
-            await downloading_msg.edit_text(
-                f"❌ 上传 PDF 失败: {str(e)}"
-            )
-            return
 
-        # 删除下载消息
+                # 关闭文件
+                for media in media_group:
+                    try:
+                        media.media.close()
+                    except:
+                        pass
+
+                logger.info(f"第 {batch_num + 1}/{total_batches} 组发送成功")
+
+                # 更新进度
+                if batch_num < total_batches - 1:
+                    await downloading_msg.edit_text(
+                        f"📤 发送进度: {batch_num + 1}/{total_batches} 组\n"
+                        f"已发送 {end_idx}/{total_images} 张图片..."
+                    )
+
+            except Exception as e:
+                logger.error(f"发送第 {batch_num + 1} 组图片失败: {e}", exc_info=True)
+                await downloading_msg.edit_text(
+                    f"❌ 发送图片失败\n\n"
+                    f"第 {batch_num + 1}/{total_batches} 组\n"
+                    f"错误: {str(e)}"
+                )
+                return
+
+        # 删除进度消息
         try:
             await downloading_msg.delete()
         except:
             pass
 
-        # 清理文件
-        try:
-            pdf_file.unlink()
-            logger.info(f"已删除临时 PDF 文件")
-        except Exception as e:
-            logger.warning(f"删除 PDF 文件失败: {e}")
-
+        # 清理下载目录
         if TelegramConfig.AUTO_CLEANUP:
             try:
                 shutil.rmtree(download_dir, ignore_errors=True)
@@ -409,7 +431,7 @@ async def handle_download(update: Update, album_id: str):
             except Exception as e:
                 logger.warning(f"清理下载目录失败: {e}")
 
-        logger.info(f"成功完成整个流程: {album_id} ({file_size_mb:.1f}MB)")
+        logger.info(f"成功完成整个流程: {album_id} (共 {total_images} 张图片, {total_batches} 组)")
 
     except Exception as e:
         logger.error(f"下载错误: {e}", exc_info=True)
