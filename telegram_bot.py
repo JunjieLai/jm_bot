@@ -302,38 +302,49 @@ async def handle_download(update: Update, album_id: str):
         )
 
     try:
-        # 进度回调（心跳机制）
-        last_update_time = 0
-        import time
+        sent_count = 0
 
+        # 图片回调：每下载一张就发送一张
+        async def image_callback(img_path: Path):
+            nonlocal sent_count
+            sent_count += 1
+
+            try:
+                logger.info(f"发送图片 #{sent_count}: {img_path.name}")
+
+                # 发送单张图片
+                with open(img_path, 'rb') as f:
+                    caption = f"📖 漫画 ID: {album_id}\n📄 图片 #{sent_count}"
+                    await update.effective_chat.send_photo(
+                        photo=f,
+                        caption=caption,
+                        read_timeout=30,
+                        write_timeout=30
+                    )
+
+                logger.info(f"图片 #{sent_count} 发送成功")
+
+            except Exception as e:
+                logger.error(f"发送图片失败: {e}", exc_info=True)
+
+        # 进度回调
         async def progress_callback(current, total):
-            nonlocal last_update_time
-            current_time = time.time()
-
-            # current == -1 表示心跳更新
-            if current == -1:
-                # 每5秒心跳一次，更新消息让 Railway 知道还活着
-                dots = "." * (total % 4)
+            try:
                 await downloading_msg.edit_text(
-                    f"📥 下载中: {album_id}\n"
-                    f"⏳ 正在下载{dots}\n"
-                    f"⏱️ 已用时: {total * 5} 秒"
+                    f"📥 下载并发送中: {album_id}\n"
+                    f"📤 已发送: {current} 张\n"
+                    f"⏱️ 实时流式传输..."
                 )
-                logger.info(f"心跳更新 #{total}")
-            # 限制更新频率，避免 Telegram API 限流
-            elif current_time - last_update_time >= 3:
-                last_update_time = current_time
-                percent = int(current / total * 100)
-                bar = "█" * (percent // 10) + "░" * (10 - percent // 10)
-                await downloading_msg.edit_text(
-                    f"📥 下载中: {album_id}\n"
-                    f"⏳ 进度: [{bar}] {percent}%\n"
-                    f"📄 {current}/{total} 页"
-                )
+            except:
+                pass
 
-        # 下载
-        logger.info(f"开始下载漫画 {album_id}")
-        download_dir = await jm_api.download(album_id, progress_callback)
+        # 流式下载和发送
+        logger.info(f"开始流式下载漫画 {album_id}")
+        download_dir = await jm_api.download_with_streaming(
+            album_id,
+            image_callback=image_callback,
+            progress_callback=progress_callback
+        )
 
         if not download_dir:
             logger.error(f"下载失败: {album_id}")
@@ -344,90 +355,7 @@ async def handle_download(update: Update, album_id: str):
             )
             return
 
-        logger.info(f"下载完成，目录: {download_dir}")
-
-        # 获取所有图片文件
-        image_files = sorted(download_dir.glob("*.webp"))
-        if not image_files:
-            image_files = sorted(download_dir.glob("*.jpg"))
-        if not image_files:
-            image_files = sorted(download_dir.glob("*.png"))
-
-        if not image_files:
-            logger.error(f"未找到图片文件: {album_id}")
-            await downloading_msg.edit_text(
-                f"❌ 下载的文件夹中没有图片\n\n"
-                f"漫画 ID: {album_id}"
-            )
-            return
-
-        total_images = len(image_files)
-        logger.info(f"找到 {total_images} 张图片")
-
-        await downloading_msg.edit_text(
-            f"✅ 下载完成！共 {total_images} 张图片\n"
-            f"📤 正在发送图片..."
-        )
-
-        # Telegram Media Group 限制每组 10 张图片
-        # 分批发送
-        batch_size = 10
-        total_batches = (total_images + batch_size - 1) // batch_size
-
-        logger.info(f"开始发送 {total_batches} 组图片")
-
-        for batch_num in range(total_batches):
-            start_idx = batch_num * batch_size
-            end_idx = min(start_idx + batch_size, total_images)
-            batch_files = image_files[start_idx:end_idx]
-
-            logger.info(f"发送第 {batch_num + 1}/{total_batches} 组 ({len(batch_files)} 张)")
-
-            try:
-                # 构建 Media Group
-                media_group = []
-                for i, img_file in enumerate(batch_files):
-                    # 第一张图片添加标题
-                    if i == 0:
-                        if total_batches > 1:
-                            caption = f"📖 漫画 ID: {album_id}\n📦 第 {batch_num + 1}/{total_batches} 组 (共 {total_images} 张)"
-                        else:
-                            caption = f"📖 漫画 ID: {album_id}\n📦 共 {total_images} 张图片"
-                        media_group.append(InputMediaPhoto(open(img_file, 'rb'), caption=caption))
-                    else:
-                        media_group.append(InputMediaPhoto(open(img_file, 'rb')))
-
-                # 发送图片组
-                await update.effective_chat.send_media_group(
-                    media=media_group,
-                    read_timeout=60,
-                    write_timeout=60
-                )
-
-                # 关闭文件
-                for media in media_group:
-                    try:
-                        media.media.close()
-                    except:
-                        pass
-
-                logger.info(f"第 {batch_num + 1}/{total_batches} 组发送成功")
-
-                # 更新进度
-                if batch_num < total_batches - 1:
-                    await downloading_msg.edit_text(
-                        f"📤 发送进度: {batch_num + 1}/{total_batches} 组\n"
-                        f"已发送 {end_idx}/{total_images} 张图片..."
-                    )
-
-            except Exception as e:
-                logger.error(f"发送第 {batch_num + 1} 组图片失败: {e}", exc_info=True)
-                await downloading_msg.edit_text(
-                    f"❌ 发送图片失败\n\n"
-                    f"第 {batch_num + 1}/{total_batches} 组\n"
-                    f"错误: {str(e)}"
-                )
-                return
+        logger.info(f"下载完成，目录: {download_dir}，已发送 {sent_count} 张图片")
 
         # 删除进度消息
         try:
@@ -443,7 +371,7 @@ async def handle_download(update: Update, album_id: str):
             except Exception as e:
                 logger.warning(f"清理下载目录失败: {e}")
 
-        logger.info(f"成功完成整个流程: {album_id} (共 {total_images} 张图片, {total_batches} 组)")
+        logger.info(f"成功完成整个流程: {album_id} (共 {sent_count} 张图片)")
 
     except Exception as e:
         logger.error(f"下载错误: {e}", exc_info=True)

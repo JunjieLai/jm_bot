@@ -153,15 +153,17 @@ class JMComicAPI:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(self.executor, _get_info)
 
-    async def download(
+    async def download_with_streaming(
         self,
         album_id: str,
+        image_callback: Optional[Callable[[Path], None]] = None,
         progress_callback: Optional[Callable[[int, int], None]] = None
     ) -> Optional[Path]:
-        """下载漫画
+        """流式下载漫画，每下载一张就通过回调返回
 
         Args:
             album_id: 漫画 ID
+            image_callback: 图片回调函数 (image_path)
             progress_callback: 进度回调函数 (current, total)
 
         Returns:
@@ -169,6 +171,7 @@ class JMComicAPI:
         """
         download_complete = False
         result_holder = [None]
+        sent_images = set()
 
         def _download():
             nonlocal download_complete
@@ -178,10 +181,10 @@ class JMComicAPI:
                 option.dir_rule.base_dir = str(self.download_dir)
 
                 # 关键：限制下载并发数，减少内存占用
-                # 默认是 30 个线程，改为 2 个
+                # 使用单线程下载，最低内存
                 if hasattr(option.download, 'image'):
-                    option.download.image.thread_count = 2
-                    print(f"设置下载线程数: 2")
+                    option.download.image.thread_count = 1
+                    print(f"设置下载线程数: 1 (流式模式)")
 
                 # 下载
                 print(f"开始下载漫画 {album_id}")
@@ -215,20 +218,65 @@ class JMComicAPI:
         loop = asyncio.get_event_loop()
         download_task = loop.run_in_executor(self.executor, _download)
 
-        # 心跳：每5秒调用一次进度回调
+        # 监控下载目录，每秒检查新图片
         heartbeat_count = 0
+        last_progress_update = 0
+
         while not download_complete:
-            await asyncio.sleep(5)
-            if not download_complete and progress_callback:
-                heartbeat_count += 1
-                try:
-                    # 发送心跳进度更新
-                    await progress_callback(-1, heartbeat_count)
-                except Exception as e:
-                    print(f"进度回调错误: {e}")
+            await asyncio.sleep(1)
+            heartbeat_count += 1
+
+            # 查找下载目录
+            download_dirs = list(self.download_dir.glob(f"*{album_id}*"))
+            if download_dirs:
+                download_dir = download_dirs[0]
+
+                # 查找所有图片
+                image_files = sorted(download_dir.glob("*.webp"))
+                if not image_files:
+                    image_files = sorted(download_dir.glob("*.jpg"))
+                if not image_files:
+                    image_files = sorted(download_dir.glob("*.png"))
+
+                # 发送新图片
+                for img_file in image_files:
+                    if img_file not in sent_images and img_file.stat().st_size > 0:
+                        sent_images.add(img_file)
+                        if image_callback:
+                            try:
+                                await image_callback(img_file)
+                            except Exception as e:
+                                print(f"图片回调错误: {e}")
+
+                # 每5秒发送进度更新
+                if heartbeat_count - last_progress_update >= 5:
+                    last_progress_update = heartbeat_count
+                    if progress_callback:
+                        try:
+                            await progress_callback(len(sent_images), -1)
+                        except Exception as e:
+                            print(f"进度回调错误: {e}")
 
         # 等待下载完成
         await download_task
+
+        # 发送剩余的图片
+        if result_holder[0]:
+            download_dir = result_holder[0]
+            image_files = sorted(download_dir.glob("*.webp"))
+            if not image_files:
+                image_files = sorted(download_dir.glob("*.jpg"))
+            if not image_files:
+                image_files = sorted(download_dir.glob("*.png"))
+
+            for img_file in image_files:
+                if img_file not in sent_images:
+                    sent_images.add(img_file)
+                    if image_callback:
+                        try:
+                            await image_callback(img_file)
+                        except Exception as e:
+                            print(f"图片回调错误: {e}")
 
         return result_holder[0]
 
