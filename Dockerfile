@@ -24,8 +24,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 创建必要的目录
 RUN mkdir -p downloads temp logs
 
-# 暴露端口（虽然 Telegram Bot 不需要，但 Railway 可能需要）
-EXPOSE 8080
-
 # 启动命令
 CMD ["python", "telegram_bot.py"]
