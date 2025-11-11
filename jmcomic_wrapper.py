@@ -28,7 +28,8 @@ class JMComicAPI:
         """
         self.download_dir = download_dir
         self.download_dir.mkdir(exist_ok=True, parents=True)
-        self.executor = ThreadPoolExecutor(max_workers=4)
+        # 减少线程数以降低内存占用（Railway 内存限制）
+        self.executor = ThreadPoolExecutor(max_workers=1)
 
     async def search(self, keyword: str, limit: int = 10) -> List[Dict]:
         """搜索漫画
@@ -172,9 +173,15 @@ class JMComicAPI:
         def _download():
             nonlocal download_complete
             try:
-                # 创建选项
+                # 创建选项，限制并发以减少内存占用
                 option = jmcomic.JmOption.default()
                 option.dir_rule.base_dir = str(self.download_dir)
+
+                # 关键：限制下载并发数，减少内存占用
+                # 默认是 30 个线程，改为 2 个
+                if hasattr(option.download, 'image'):
+                    option.download.image.thread_count = 2
+                    print(f"设置下载线程数: 2")
 
                 # 下载
                 print(f"开始下载漫画 {album_id}")
