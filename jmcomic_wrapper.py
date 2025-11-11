@@ -9,10 +9,28 @@ from typing import List, Dict, Optional, Callable
 from PIL import Image
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import os
+
+# 关键：强制限制 Python 默认线程池大小
+# 这会影响所有使用 ThreadPoolExecutor(max_workers=None) 的代码
+os.environ['PYTHONTHREADPOOLSIZE'] = '1'
 
 # 添加 JMComic 库路径
 jm_path = Path(__file__).parent / "JMComic-Crawler-Python" / "src"
 sys.path.insert(0, str(jm_path))
+
+# Monkey Patch: 修改 concurrent.futures 的默认行为
+import concurrent.futures
+_original_threadpool_init = concurrent.futures.ThreadPoolExecutor.__init__
+
+def _patched_threadpool_init(self, max_workers=None, *args, **kwargs):
+    """强制限制线程数为 1"""
+    if max_workers is None or max_workers > 1:
+        print(f"[PATCH] ThreadPoolExecutor max_workers 被限制: {max_workers} -> 1")
+        max_workers = 1
+    return _original_threadpool_init(self, max_workers, *args, **kwargs)
+
+concurrent.futures.ThreadPoolExecutor.__init__ = _patched_threadpool_init
 
 import jmcomic
 
