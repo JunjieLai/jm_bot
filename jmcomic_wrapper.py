@@ -176,15 +176,21 @@ class JMComicAPI:
         def _download():
             nonlocal download_complete
             try:
-                # 创建选项，限制并发以减少内存占用
-                option = jmcomic.JmOption.default()
-                option.dir_rule.base_dir = str(self.download_dir)
+                # 创建选项，使用配置字典限制并发
+                config = {
+                    'dir_rule': {
+                        'base_dir': str(self.download_dir)
+                    },
+                    'download': {
+                        'image': {
+                            'thread_count': 1  # 强制单线程
+                        }
+                    }
+                }
 
-                # 关键：限制下载并发数，减少内存占用
-                # 使用单线程下载，最低内存
-                if hasattr(option.download, 'image'):
-                    option.download.image.thread_count = 1
-                    print(f"设置下载线程数: 1 (流式模式)")
+                print(f"创建配置: thread_count=1")
+                option = jmcomic.JmOption.construct(config, cover_default=True)
+                print(f"选项已创建")
 
                 # 下载
                 print(f"开始下载漫画 {album_id}")
