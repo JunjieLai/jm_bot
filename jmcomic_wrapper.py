@@ -172,23 +172,10 @@ class JMComicAPI:
                 option = jmcomic.JmOption.default()
                 option.dir_rule.base_dir = str(self.download_dir)
 
-                # 如果有进度回调，需要自定义下载逻辑
-                if progress_callback:
-                    # 先获取漫画信息
-                    client = option.build_jm_client()
-                    album = client.get_album_detail(album_id)
-
-                    # 获取所有 photo
-                    photos = album.photos if hasattr(album, 'photos') else []
-                    total_photos = len(photos)
-
-                    # 模拟进度（实际 jmcomic 库不支持细粒度进度回调）
-                    for i, photo in enumerate(photos, 1):
-                        if progress_callback:
-                            progress_callback(i, total_photos)
-
                 # 下载
+                print(f"开始下载漫画 {album_id}")
                 jmcomic.download_album(album_id, option)
+                print(f"下载完成 {album_id}")
 
                 # 查找下载的目录
                 downloaded_dirs = list(self.download_dir.glob(f"*{album_id}*"))
@@ -201,8 +188,10 @@ class JMComicAPI:
                     )
 
                 if downloaded_dirs:
+                    print(f"找到下载目录: {downloaded_dirs[0]}")
                     return downloaded_dirs[0]
 
+                print(f"未找到下载目录")
                 return None
 
             except Exception as e:
@@ -211,8 +200,18 @@ class JMComicAPI:
                 traceback.print_exc()
                 return None
 
+        # 在线程池中执行下载
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self.executor, _download)
+        result = await loop.run_in_executor(self.executor, _download)
+
+        # 下载完成后调用进度回调（100%）
+        if result and progress_callback:
+            try:
+                await progress_callback(100, 100)
+            except:
+                pass
+
+        return result
 
     async def create_pdf(
         self,

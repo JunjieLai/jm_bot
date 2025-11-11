@@ -319,9 +319,11 @@ async def handle_download(update: Update, album_id: str):
                 )
 
         # 下载
+        logger.info(f"开始下载漫画 {album_id}")
         download_dir = await jm_api.download(album_id, progress_callback)
 
         if not download_dir:
+            logger.error(f"下载失败: {album_id}")
             await downloading_msg.edit_text(
                 f"❌ 下载失败\n\n"
                 f"漫画 ID: {album_id}\n"
@@ -329,6 +331,7 @@ async def handle_download(update: Update, album_id: str):
             )
             return
 
+        logger.info(f"下载完成，目录: {download_dir}")
         await downloading_msg.edit_text(
             f"✅ 下载完成！\n"
             f"📦 正在生成 PDF..."
@@ -336,13 +339,17 @@ async def handle_download(update: Update, album_id: str):
 
         # 创建 PDF
         pdf_file = TelegramConfig.TEMP_DIR / f"{album_id}.pdf"
+        logger.info(f"开始生成 PDF: {pdf_file}")
         success = await jm_api.create_pdf(download_dir, pdf_file)
 
         if not success:
+            logger.error(f"生成 PDF 失败: {album_id}")
             await downloading_msg.edit_text(
                 f"❌ 生成 PDF 失败"
             )
             return
+
+        logger.info(f"PDF 生成成功: {pdf_file}")
 
         # 检查文件大小
         file_size_mb = pdf_file.stat().st_size / (1024 * 1024)
@@ -358,27 +365,50 @@ async def handle_download(update: Update, album_id: str):
             return
 
         # 发送文件
+        logger.info(f"开始上传 PDF: {file_size_mb:.1f}MB")
         await downloading_msg.edit_text(
             f"📤 正在上传 PDF ({file_size_mb:.1f}MB)...\n"
             "请稍候..."
         )
 
-        with open(pdf_file, 'rb') as f:
-            await update.effective_chat.send_document(
-                document=f,
-                filename=f"{album_id}.pdf",
-                caption=f"📖 漫画 ID: {album_id}\n📦 大小: {file_size_mb:.1f}MB"
+        try:
+            with open(pdf_file, 'rb') as f:
+                await update.effective_chat.send_document(
+                    document=f,
+                    filename=f"{album_id}.pdf",
+                    caption=f"📖 漫画 ID: {album_id}\n📦 大小: {file_size_mb:.1f}MB",
+                    read_timeout=120,
+                    write_timeout=120
+                )
+            logger.info(f"PDF 上传成功")
+        except Exception as e:
+            logger.error(f"上传 PDF 失败: {e}", exc_info=True)
+            await downloading_msg.edit_text(
+                f"❌ 上传 PDF 失败: {str(e)}"
             )
+            return
 
         # 删除下载消息
-        await downloading_msg.delete()
+        try:
+            await downloading_msg.delete()
+        except:
+            pass
 
         # 清理文件
-        pdf_file.unlink()
-        if TelegramConfig.AUTO_CLEANUP:
-            shutil.rmtree(download_dir, ignore_errors=True)
+        try:
+            pdf_file.unlink()
+            logger.info(f"已删除临时 PDF 文件")
+        except Exception as e:
+            logger.warning(f"删除 PDF 文件失败: {e}")
 
-        logger.info(f"成功发送文件: {album_id} ({file_size_mb:.1f}MB)")
+        if TelegramConfig.AUTO_CLEANUP:
+            try:
+                shutil.rmtree(download_dir, ignore_errors=True)
+                logger.info(f"已清理下载目录")
+            except Exception as e:
+                logger.warning(f"清理下载目录失败: {e}")
+
+        logger.info(f"成功完成整个流程: {album_id} ({file_size_mb:.1f}MB)")
 
     except Exception as e:
         logger.error(f"下载错误: {e}", exc_info=True)
