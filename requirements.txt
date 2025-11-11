@@ -1,6 +1,5 @@
-# QQ Bot Framework
-nonebot2>=2.2.0
-nonebot-adapter-onebot>=2.4.0
+# Telegram Bot Framework
+python-telegram-bot>=20.0
 
 # JMComic Dependencies
 commonx>=0.6.38
