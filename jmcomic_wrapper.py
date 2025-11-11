@@ -230,6 +230,7 @@ class JMComicAPI:
             是否成功
         """
         def _create_pdf():
+            images_to_close = []
             try:
                 # 获取所有图片文件并排序
                 image_files = sorted(source_dir.glob("*.webp"))
@@ -239,18 +240,35 @@ class JMComicAPI:
                     image_files = sorted(source_dir.glob("*.png"))
 
                 if not image_files:
+                    print("未找到图片文件")
                     return False
 
-                # 转换第一张图片
-                images = []
-                first_img = Image.open(image_files[0]).convert('RGB')
+                print(f"找到 {len(image_files)} 个图片文件")
 
-                # 转换其余图片
-                for img_file in image_files[1:]:
-                    img = Image.open(img_file).convert('RGB')
-                    images.append(img)
+                # 打开第一张图片
+                first_img = Image.open(image_files[0]).convert('RGB')
+                images_to_close.append(first_img)
+                print(f"第一张图片: {image_files[0]}, 尺寸: {first_img.size}")
+
+                # 逐个加载剩余图片，添加到列表
+                images = []
+                for i, img_file in enumerate(image_files[1:], 2):
+                    try:
+                        img = Image.open(img_file).convert('RGB')
+                        images.append(img)
+                        images_to_close.append(img)
+
+                        # 每处理5张图片打印一次进度
+                        if i % 5 == 0:
+                            print(f"已加载 {i}/{len(image_files)} 张图片")
+                    except Exception as e:
+                        print(f"加载图片失败 {img_file}: {e}")
+                        continue
+
+                print(f"成功加载所有 {len(image_files)} 张图片")
 
                 # 保存为 PDF
+                print(f"开始保存 PDF: {output_file}")
                 first_img.save(
                     output_file,
                     save_all=True,
@@ -260,16 +278,25 @@ class JMComicAPI:
                     optimize=False
                 )
 
-                # 关闭所有图片
-                for img in images:
-                    img.close()
-                first_img.close()
-
+                print(f"PDF 创建成功: {output_file.stat().st_size / (1024*1024):.2f}MB")
                 return True
 
+            except MemoryError as e:
+                print(f"内存不足，无法创建 PDF: {e}")
+                return False
             except Exception as e:
                 print(f"创建 PDF 错误: {e}")
+                import traceback
+                traceback.print_exc()
                 return False
+            finally:
+                # 确保关闭所有图片
+                print(f"关闭 {len(images_to_close)} 张图片")
+                for img in images_to_close:
+                    try:
+                        img.close()
+                    except:
+                        pass
 
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(self.executor, _create_pdf)

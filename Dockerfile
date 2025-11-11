@@ -24,5 +24,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 创建必要的目录
 RUN mkdir -p downloads temp logs
 
+# 暴露健康检查端口
+EXPOSE 8080
+
 # 启动命令
 CMD ["python", "telegram_bot.py"]

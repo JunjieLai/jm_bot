@@ -24,6 +24,7 @@ from telegram.ext import (
 
 from telegram_config import TelegramConfig
 from jmcomic_wrapper import JMComicAPI
+from healthcheck import start_healthcheck_server
 
 # 配置日志
 logging.basicConfig(
@@ -504,6 +505,9 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     """主函数"""
     try:
+        # 启动健康检查服务器（后台线程）
+        start_healthcheck_server(port=8080)
+
         # 验证配置
         TelegramConfig.validate()
 
